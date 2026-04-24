@@ -1,29 +1,28 @@
-# Python
+# Environment & Secrets
+.env
+.loadtest_token
+
+# Python & Dependencies
 __pycache__/
 *.pyc
 *.pyo
-.env
-venv/
 .venv/
+venv/
+.python-version
 
-#extra files
-Service_Plan.md
-Scalable User Service 348f236596f480568ce6d10f0a3b6e25.html
+# Tooling Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
+# Load Test Results
+loadtest_*.csv
+loadtest_*.json
 
-
-
-
-# IDE
+# IDEs
 .vscode/
 .idea/
 
-# OS
+# OS Specific
 .DS_Store
 Thumbs.db
-
-# Uploads (runtime-generated)
-uploads/
-
-# uv
-.python-version
