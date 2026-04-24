@@ -80,5 +80,23 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    full_name: str
+    is_verified: bool
+    created_at: datetime
+    updated_at: datetime
+    last_login_at: datetime | None = None
+    
+    model_config = {"from_attributes" : True}
+
+
+
     
     

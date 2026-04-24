@@ -14,11 +14,11 @@ async def get_cached_user_profile(redis: Redis, user_id:int) -> dict | None:
         return None
     return json.loads(cached_value)
 
-async def set_cached_user_profiles(redis: Redis, user_id: int, profile_data: dict) -> None:
+async def set_cached_user_profile(redis: Redis, user_id: int, profile_data: dict) -> None:
     key =user_profile_cache_key(user_id)
-    await redis.set(ey, json.dumps(profile_data), ex = PROFILE_CACHE_TTL_SECONDS)
+    await redis.set(key, json.dumps(profile_data), ex = PROFILE_CACHE_TTL_SECONDS)
 
-async def delete_cached_user_profiles(redis: Redis, user_id:int) -> None:
+async def delete_cached_user_profile(redis: Redis, user_id:int) -> None:
     key = user_profile_cache_key(user_id)
     await redis.delete(key)
 

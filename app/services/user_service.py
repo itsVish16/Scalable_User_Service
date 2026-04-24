@@ -15,7 +15,7 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     return result.scalar_one_or_none()
 
 async def get_user_by_id(db: AsyncSession, id: int) -> User | None:
-    result= await db.execute(select(User).where(User.id == user.id))
+    result= await db.execute(select(User).where(id == User.id))
     return result.scalar_one_or_none()
     
 
