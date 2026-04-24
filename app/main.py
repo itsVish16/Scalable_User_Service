@@ -1,12 +1,17 @@
+import logging
+
 from fastapi import FastAPI
 
+from app.api.user import router as user_router
 
-logger = logger.getLogging(__name__)
+logger = logging.getLogger(__name__)
 
-app = FastAPI()
+app = FastAPI(title="Scalable User Service")
+
+app.include_router(user_router)
+
 
 @app.get("/health")
 async def get_health():
-    return {
-        "status" : "healthy"
-    }
+    logger.info("Health check requested")
+    return {"status": "healthy"}
