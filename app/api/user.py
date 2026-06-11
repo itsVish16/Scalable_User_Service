@@ -236,8 +236,8 @@ async def login(
     await reset_login_attempts(redis, str(payload.email))
 
     # Open a new short-lived session using the same engine as the request session
-    from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     async with AsyncSession(db.bind, expire_on_commit=False) as new_db:
         await new_db.execute(update(User).where(User.id == user_id).values(last_login_at=datetime.now(UTC)))
