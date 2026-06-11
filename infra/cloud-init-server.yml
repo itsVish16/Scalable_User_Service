@@ -60,6 +60,8 @@ write_files:
       done
       
       # 7. Seed 5000 users
+      echo "Copying seeding script to container..."
+      docker compose cp setup_test_data.py api:/app/setup_test_data.py
       echo "Seeding load test users..."
       docker compose exec -T api python setup_test_data.py
       
