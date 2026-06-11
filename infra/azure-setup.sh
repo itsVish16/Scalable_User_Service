@@ -137,7 +137,7 @@ rm ./.loadtest_users.json
 
 # 12. Start Locust on LoadGen pointing to Server's Private IP
 echo "Starting Locust on LoadGen VM..."
-ssh -o StrictHostKeyChecking=no ubuntu@$LOADGEN_IP "nohup /root/.local/bin/uv run locust -f /app/locustfile.py --host http://$SERVER_PRIVATE_IP:8000 --web-host 0.0.0.0 --web-port 8089 > /app/locust.log 2>&1 < /dev/null &"
+ssh -o StrictHostKeyChecking=no ubuntu@$LOADGEN_IP "nohup /home/ubuntu/.local/bin/uv run locust -f /app/locustfile.py --host http://$SERVER_PRIVATE_IP:8000 --web-host 0.0.0.0 --web-port 8089 > /app/locust.log 2>&1 < /dev/null &"
 
 echo "============================================="
 echo "DEPLOYMENT COMPLETE!"
