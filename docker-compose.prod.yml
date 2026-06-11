@@ -5,6 +5,7 @@ services:
       UVICORN_LOOP: "uvloop"
       DEBUG: "false"
       ENABLE_RATE_LIMITING: "false"
+      BCRYPT_CONCURRENCY: "1"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
