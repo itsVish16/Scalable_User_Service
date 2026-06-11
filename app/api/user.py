@@ -16,6 +16,7 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     generate_otp,
+    hash_password,
     verify_password,
 )
 from app.db.database import get_db
@@ -53,13 +54,11 @@ from app.services.cache import (
     set_password_reset_token,
 )
 from app.services.user_service import (
-    check_user_password,
     create_user,
     get_user_by_email,
     get_user_by_id,
     get_user_by_username,
     mark_user_verified,
-    update_last_login,
     update_user,
     update_user_password,
 )
@@ -170,8 +169,9 @@ async def signup(
             detail="Username is already taken",
         )
 
+    password_hash = await hash_password(payload.password)
     try:
-        user = await create_user(db, payload)
+        user = await create_user(db, payload, password_hash)
     except IntegrityError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -205,6 +205,7 @@ async def login(
     # Timing side-channel fix: always run bcrypt verification even if user doesn't exist.
     # This normalizes response time so attackers can't distinguish "user exists" from "user doesn't".
     if user is None:
+        await db.close()
         await verify_password("dummy", DUMMY_HASH)
         await increment_login_attempts(redis, str(payload.email))
         raise HTTPException(
@@ -212,24 +213,38 @@ async def login(
             detail="Invalid email or password",
         )
 
-    if not await check_user_password(user, payload.password):
+    password_hash = user.password_hash
+    user_id = user.id
+    user_is_verified = user.is_verified
+
+    # Release connection back to pool BEFORE doing the slow bcrypt verification!
+    await db.close()
+
+    if not await verify_password(payload.password, password_hash):
         await increment_login_attempts(redis, str(payload.email))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
-    if not user.is_verified:
+    if not user_is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Please verify your email before logging in",
         )
 
     await reset_login_attempts(redis, str(payload.email))
-    await update_last_login(db, user)
 
-    access_token = create_access_token(str(user.id))
-    refresh_token = create_refresh_token(str(user.id))
+    # Open a new short-lived session using the same engine as the request session
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy import update
+
+    async with AsyncSession(db.bind, expire_on_commit=False) as new_db:
+        await new_db.execute(update(User).where(User.id == user_id).values(last_login_at=datetime.now(UTC)))
+        await new_db.commit()
+
+    access_token = create_access_token(str(user_id))
+    refresh_token = create_refresh_token(str(user_id))
 
     return {
         "access_token": access_token,
@@ -365,7 +380,8 @@ async def reset_password(
             detail="Invalid or expired reset token",
         )
 
-    await update_user_password(db, user, payload.new_password)
+    password_hash = await hash_password(payload.new_password)
+    await update_user_password(db, user, password_hash)
     await delete_password_reset_token(redis, str(payload.email))
     await delete_cached_user_profile(redis, user.id)
 

@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password, verify_password
+from app.core.security import verify_password
 from app.models.user import User
 from app.schemas.user import SignupRequest, UpdateUserRequest
 
@@ -24,12 +24,12 @@ async def get_user_by_id(db: AsyncSession, id: int) -> User | None:
     return result.scalar_one_or_none()
 
 
-async def create_user(db: AsyncSession, payload: SignupRequest) -> User:
+async def create_user(db: AsyncSession, payload: SignupRequest, password_hash: str) -> User:
     user = User(
         username=payload.username,
         email=str(payload.email),
         full_name=payload.full_name,
-        password_hash=await hash_password(payload.password),
+        password_hash=password_hash,
         is_verified=False,
     )
 
@@ -71,8 +71,8 @@ async def update_user(
     return user
 
 
-async def update_user_password(db: AsyncSession, user: User, new_password: str) -> User:
-    user.password_hash = await hash_password(new_password)
+async def update_user_password(db: AsyncSession, user: User, password_hash: str) -> User:
+    user.password_hash = password_hash
 
     try:
         await db.commit()
