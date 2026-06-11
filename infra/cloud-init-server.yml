@@ -63,7 +63,7 @@ write_files:
       echo "Copying seeding script to container..."
       docker compose cp setup_test_data.py api:/app/setup_test_data.py
       echo "Seeding load test users..."
-      docker compose exec -T api python setup_test_data.py
+      docker compose exec -u root -T api python setup_test_data.py
       
       # 8. Copy credentials json out of container
       docker compose cp api:/app/.loadtest_users.json /app/.loadtest_users.json
