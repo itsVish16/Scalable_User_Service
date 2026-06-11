@@ -4,7 +4,7 @@ services:
       UVICORN_WORKERS: "4"
       UVICORN_LOOP: "uvloop"
       DEBUG: "false"
-      ENABLE_RATE_LIMITING: "true"
+      ENABLE_RATE_LIMITING: "false"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
