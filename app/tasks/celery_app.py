@@ -6,6 +6,7 @@ celery_app = Celery(
     "user_service",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
+    include=["app.tasks.email"],
 )
 
 celery_app.conf.update(
