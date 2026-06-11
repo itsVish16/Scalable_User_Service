@@ -67,7 +67,7 @@ write_files:
       
       # 8. Copy credentials json out of container
       docker compose cp api:/app/.loadtest_users.json /app/.loadtest_users.json
-      chmod 644 /app/.loadtest_users.json
+      chown -R ubuntu:ubuntu /app
       
       echo "=== Server Setup Complete ==="
 

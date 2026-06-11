@@ -26,6 +26,8 @@ write_files:
       # 4. Sync python dependencies including locust
       /root/.local/bin/uv sync
       
+      chown -R ubuntu:ubuntu /app
+      
       echo "=== LoadGen Setup Complete ==="
 
 runcmd:
