@@ -62,6 +62,11 @@ from app.services.user_service import (
     update_user,
     update_user_password,
 )
+from app.tasks.email import (
+    send_password_reset_email,
+    send_verification_email,
+    send_welcome_email,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/users/login")
@@ -181,6 +186,7 @@ async def signup(
     verification_otp = generate_otp()
     await set_email_verification_token(redis, str(user.email), verification_otp)
     logger.info("verification_otp_generated", email=str(user.email))
+    send_verification_email.delay(str(user.email), verification_otp)
 
     if settings.debug:
         return {"message": f"User registered successfully. Verification OTP: {verification_otp}"}
@@ -351,6 +357,7 @@ async def forgot_password(
         reset_otp = generate_otp()
         await set_password_reset_token(redis, str(payload.email), reset_otp)
         logger.info("password_reset_otp_generated", email=str(payload.email))
+        send_password_reset_email.delay(str(payload.email), reset_otp)
 
         if settings.debug:
             return {"message": f"Password reset OTP generated: {reset_otp}"}
@@ -441,6 +448,7 @@ async def verify_email(
     await mark_user_verified(db, user)
     await delete_email_verification_token(redis, str(payload.email))
     await delete_cached_user_profile(redis, user.id)
+    send_welcome_email.delay(str(user.email), user.full_name)
 
     return {"message": "Email verified successfully"}
 
@@ -464,6 +472,7 @@ async def resend_verification(
     verification_otp = generate_otp()
     await set_email_verification_token(redis, str(payload.email), verification_otp)
     logger.info("verification_otp_regenerated", email=str(payload.email))
+    send_verification_email.delay(str(payload.email), verification_otp)
 
     if settings.debug:
         return {"message": f"Verification OTP generated: {verification_otp}"}

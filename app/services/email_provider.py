@@ -10,6 +10,10 @@ resend.api_key = settings.resend_api_key
 
 
 def send_email(to_email: str, subject: str, html: str) -> dict | None:
+    if not settings.email_delivery_enabled:
+        logger.info("Email delivery disabled. Subject: %s, To: %s", subject, to_email)
+        return None
+
     try:
         response = resend.Emails.send(
             {
