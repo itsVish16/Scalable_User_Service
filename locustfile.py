@@ -36,7 +36,6 @@ import threading
 from pathlib import Path
 
 from locust import HttpUser, between, constant, task
-from locust.exception import StopUser
 
 # --- Configuration ---
 USERS_FILE = Path(os.getenv("LOAD_TEST_USERS_FILE", ".loadtest_users.json"))
@@ -88,30 +87,45 @@ class AuthenticatedUser(HttpUser):
       -  5% GET /health/ready (infra probe)
     """
 
-    wait_time = between(WAIT_MIN, WAIT_MAX)
+    wait_time = constant(0) if WAIT_MIN == 0 and WAIT_MAX == 0 else between(WAIT_MIN, WAIT_MAX)
     weight = 10 if LOAD_TEST_MODE in ("steady", "soak") else 0
 
     def on_start(self) -> None:
         self.user_data = acquire_credential()
-        self.access_token: str | None = None
-        self.refresh_token_value: str | None = None
+        self.access_token = None
+        self.refresh_token_value = None
         self._login()
 
     def _login(self) -> None:
-        resp = self.client.post(
-            "/api/v1/users/login",
-            json={
-                "email": self.user_data["email"],
-                "password": self.user_data["password"],
-            },
-            name="/api/v1/users/login",
+        import time
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                resp = self.client.post(
+                    "/api/v1/users/login",
+                    json={
+                        "email": self.user_data["email"],
+                        "password": self.user_data["password"],
+                    },
+                    name="/api/v1/users/login",
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self.access_token = data["access_token"]
+                    self.refresh_token_value = data["refresh_token"]
+                    self.client.headers.update({"Authorization": f"Bearer {self.access_token}"})
+                    return
+                print(
+                    f"Login failed (attempt {attempt + 1}/{max_retries}): {self.user_data['email']} -> {resp.status_code}"
+                )
+            except Exception as e:
+                print(f"Login error (attempt {attempt + 1}/{max_retries}): {self.user_data['email']} -> {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2.0)
+        print(
+            f"All login retries failed for {self.user_data['email']}. Virtual user will continue but request auth will fail."
         )
-        if resp.status_code != 200:
-            raise StopUser(f"Login failed: {self.user_data['email']} -> {resp.status_code}")
-        data = resp.json()
-        self.access_token = data["access_token"]
-        self.refresh_token_value = data["refresh_token"]
-        self.client.headers.update({"Authorization": f"Bearer {self.access_token}"})
 
     @task(70)
     def get_profile(self) -> None:
@@ -179,20 +193,35 @@ class SpikeUser(HttpUser):
         self._login()
 
     def _login(self) -> None:
-        resp = self.client.post(
-            "/api/v1/users/login",
-            json={
-                "email": self.user_data["email"],
-                "password": self.user_data["password"],
-            },
-            name="/api/v1/users/login [spike]",
+        import time
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                resp = self.client.post(
+                    "/api/v1/users/login",
+                    json={
+                        "email": self.user_data["email"],
+                        "password": self.user_data["password"],
+                    },
+                    name="/api/v1/users/login [spike]",
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self.access_token = data["access_token"]
+                    self.refresh_token_value = data["refresh_token"]
+                    self.client.headers.update({"Authorization": f"Bearer {self.access_token}"})
+                    return
+                print(
+                    f"Spike login failed (attempt {attempt + 1}/{max_retries}): {self.user_data['email']} -> {resp.status_code}"
+                )
+            except Exception as e:
+                print(f"Spike login error (attempt {attempt + 1}/{max_retries}): {self.user_data['email']} -> {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2.0)
+        print(
+            f"All spike login retries failed for {self.user_data['email']}. Virtual user will continue but request auth will fail."
         )
-        if resp.status_code != 200:
-            raise StopUser(f"Spike login failed: {resp.status_code}")
-        data = resp.json()
-        self.access_token = data["access_token"]
-        self.refresh_token_value = data["refresh_token"]
-        self.client.headers.update({"Authorization": f"Bearer {self.access_token}"})
 
     @task(90)
     def hammer_profile(self) -> None:

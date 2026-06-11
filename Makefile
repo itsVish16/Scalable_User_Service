@@ -25,3 +25,11 @@ up:
 
 down:
 	docker compose down
+
+azure-setup:
+	chmod +x infra/azure-setup.sh
+	./infra/azure-setup.sh
+
+azure-destroy:
+	chmod +x infra/azure-destroy.sh
+	./infra/azure-destroy.sh

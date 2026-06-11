@@ -1,0 +1,32 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+write_files:
+  - path: /app-setup.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      
+      echo "=== Starting LoadGen Setup ==="
+      
+      # 1. Install dependencies
+      apt-get update
+      apt-get install -y git curl python3 python3-pip python3-venv
+      
+      # 2. Install uv
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+      export PATH="/root/.local/bin:$PATH"
+      
+      # 3. Clone repository
+      git clone https://github.com/itsVish16/Scalable_User_Service.git /app
+      cd /app
+      
+      # 4. Sync python dependencies including locust
+      /root/.local/bin/uv sync
+      
+      echo "=== LoadGen Setup Complete ==="
+
+runcmd:
+  - bash /app-setup.sh

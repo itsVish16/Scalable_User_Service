@@ -15,7 +15,7 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://userservice:userservice@localhost:5432/userservice",
 )
-LOAD_TEST_USER_COUNT = int(os.getenv("LOAD_TEST_USER_COUNT", "1000"))
+LOAD_TEST_USER_COUNT = int(os.getenv("LOAD_TEST_USER_COUNT", "5000"))
 LOAD_TEST_PASSWORD = os.getenv("LOAD_TEST_PASSWORD", "LoadTestPass123")
 LOAD_TEST_BATCH_SIZE = int(os.getenv("LOAD_TEST_BATCH_SIZE", "250"))
 OUTPUT_FILE = Path(os.getenv("LOAD_TEST_USERS_FILE", ".loadtest_users.json"))
