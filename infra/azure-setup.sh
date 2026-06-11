@@ -9,7 +9,7 @@ SUBNET_NAME="subnet-loadtest"
 SERVER_VM_NAME="vm-userservice-server"
 LOADGEN_VM_NAME="vm-userservice-loadgen"
 SERVER_SIZE="Standard_D4s_v3"
-LOADGEN_SIZE="Standard_B2ms"
+LOADGEN_SIZE="Standard_D2as_v4"
 
 echo "============================================="
 echo "Scalable User Service — Azure Deployment Script"
