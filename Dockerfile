@@ -16,7 +16,13 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 COPY app/ ./app/
+COPY docker/ ./docker/
+
+RUN chmod +x /app/docker/start.sh
+
+RUN adduser --disabled-password --no-create-home --gecos "" appuser
+USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/docker/start.sh"]

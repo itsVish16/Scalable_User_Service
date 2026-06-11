@@ -20,7 +20,7 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
 
 
 async def get_user_by_id(db: AsyncSession, id: int) -> User | None:
-    result = await db.execute(select(User).where(id == User.id))
+    result = await db.execute(select(User).where(User.id == id))
     return result.scalar_one_or_none()
 
 
@@ -30,6 +30,7 @@ async def create_user(db: AsyncSession, payload: SignupRequest) -> User:
         email=str(payload.email),
         full_name=payload.full_name,
         password_hash=await hash_password(payload.password),
+        is_verified=False,
     )
 
     db.add(user)

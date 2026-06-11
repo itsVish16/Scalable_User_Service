@@ -28,6 +28,20 @@ class FakeRedis:
     async def ping(self):
         return True
 
+    async def incr(self, key):
+        val = int(self.store.get(key) or 0) + 1
+        self.store[key] = str(val)
+        return val
+
+    async def expire(self, key, seconds):
+        return True
+
+    async def exists(self, *keys):
+        return sum(1 for k in keys if k in self.store)
+
+    async def setex(self, key, seconds, value):
+        self.store[key] = value
+
 
 @pytest.fixture(scope="session", autouse=True)
 async def setup_test_db():
@@ -49,8 +63,11 @@ def override_dependencies():
     from app.core.rate_limit import limiter
     from app.tasks.celery_app import celery_app
 
-    limiter.enabled = False
+    original_limiter_enabled = limiter.enabled
+    original_eager = celery_app.conf.task_always_eager
     original_eager_prop = celery_app.conf.task_eager_propagates
+    limiter.enabled = False
+    celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = False
 
     fake = FakeRedis()
@@ -58,7 +75,8 @@ def override_dependencies():
     app.dependency_overrides[get_redis] = lambda: fake
     yield fake
     app.dependency_overrides.clear()
-    limiter.enabled = True
+    limiter.enabled = original_limiter_enabled
+    celery_app.conf.task_always_eager = original_eager
     celery_app.conf.task_eager_propagates = original_eager_prop
 
 
@@ -95,8 +113,7 @@ async def signup_user(client, username_prefix="testuser", verified=False, fake_r
     assert response.status_code == 201
 
     if verified and fake_redis is not None:
-        msg = response.json()["message"]
-        otp = msg.split("Verification OTP: ", 1)[1]
+        otp = await fake_redis.get(f"user:email-verification:{payload['email']}")
         verify_resp = await client.post(
             "/api/v1/users/verify-email",
             json={"email": payload["email"], "token": otp},

@@ -11,6 +11,7 @@ env:
   REDIS_URL: "redis://localhost:6379/0"
   SECRET_KEY: "ci-test-secret-not-for-production-use-change-me"
   ALGORITHM: "HS256"
+  JWT_ISSUER: "scalable-user-service"
   ACCESS_TOKEN_EXPIRE_MINUTES: "30"
   REFRESH_TOKEN_EXPIRE_MINUTES: "10080"
   CELERY_BROKER_URL: "redis://localhost:6379/0"

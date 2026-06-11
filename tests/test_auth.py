@@ -121,8 +121,8 @@ async def test_forgot_and_reset_password_flow(client, fake_redis):
     )
     assert forgot_response.status_code == 200
     forgot_message = forgot_response.json()["message"]
-    assert "Password reset OTP generated:" in forgot_message
-    reset_otp = forgot_message.split("Password reset OTP generated: ", 1)[1]
+    assert "Password reset OTP generated:" in forgot_message or "instructions are ready" in forgot_message
+    reset_otp = await fake_redis.get(f"user:password-reset:{payload['email']}")
 
     reset_response = await client.post(
         "/api/v1/users/reset-password",
@@ -143,12 +143,12 @@ async def test_forgot_and_reset_password_flow(client, fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_email_verification_flow(client):
+async def test_email_verification_flow(client, fake_redis):
     payload, signup_resp = await signup_user(client, username_prefix="verifyuser")
 
     signup_message = signup_resp.json()["message"]
-    assert "Verification OTP:" in signup_message
-    verification_token = signup_message.split("Verification OTP: ", 1)[1]
+    assert "Verification OTP:" in signup_message or "registered successfully" in signup_message
+    verification_token = await fake_redis.get(f"user:email-verification:{payload['email']}")
 
     verify_response = await client.post(
         "/api/v1/users/verify-email",
@@ -170,7 +170,7 @@ async def test_email_verification_flow(client):
 
 
 @pytest.mark.asyncio
-async def test_resend_verification_for_unverified_user(client):
+async def test_resend_verification_for_unverified_user(client, fake_redis):
     payload, _ = await signup_user(client, username_prefix="resenduser")
 
     resend_response = await client.post(
@@ -179,7 +179,7 @@ async def test_resend_verification_for_unverified_user(client):
     )
     assert resend_response.status_code == 200
     resend_message = resend_response.json()["message"]
-    assert "Verification OTP generated:" in resend_message
+    assert "Verification OTP generated:" in resend_message or "instructions are ready" in resend_message
 
 
 @pytest.mark.asyncio
@@ -240,19 +240,30 @@ async def test_logout_blacklists_token(client, fake_redis):
 
     login_resp = await login_user(client, payload["email"], payload["password"])
     assert login_resp.status_code == 200
+    access_token = login_resp.json()["access_token"]
     refresh_token = login_resp.json()["refresh_token"]
 
+    # Logout — sends access token via header and refresh token via body
     logout_resp = await client.post(
         "/api/v1/users/logout",
         json={"refresh_token": refresh_token},
+        headers={"Authorization": f"Bearer {access_token}"},
     )
     assert logout_resp.status_code == 200
 
+    # Refresh token should be blacklisted
     refresh_resp = await client.post(
         "/api/v1/users/refresh",
         json={"refresh_token": refresh_token},
     )
     assert refresh_resp.status_code == 401
+
+    # Access token should also be blacklisted
+    me_resp = await client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert me_resp.status_code == 401
 
 
 @pytest.mark.asyncio

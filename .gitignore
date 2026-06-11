@@ -1,6 +1,9 @@
 # Environment & Secrets
 .env
 .loadtest_token
+.loadtest_tokens_100
+.loadtest_users.json
+bench_results.txt
 
 # Python & Dependencies
 __pycache__/

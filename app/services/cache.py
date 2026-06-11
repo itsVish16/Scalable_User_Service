@@ -2,13 +2,16 @@ import json
 
 from redis.asyncio import Redis
 
-PROFILE_CACHE_TTL_SECONDS = 300
-RESET_TOKEN_TTL_SECONDS = 900
-EMAIL_VERIFICATION_TTL_SECONDS = 900
+from app.config import settings
+from app.core.metrics import CACHE_OPS
+
+PROFILE_CACHE_TTL_SECONDS = settings.profile_cache_ttl_seconds
+RESET_TOKEN_TTL_SECONDS = settings.otp_ttl_seconds
+EMAIL_VERIFICATION_TTL_SECONDS = settings.otp_ttl_seconds
 TOKEN_BLACKLIST_PREFIX = "token:blacklist:"
 LOGIN_ATTEMPTS_PREFIX = "login:attempts:"
-MAX_LOGIN_ATTEMPTS = 5
-LOGIN_LOCKOUT_SECONDS = 900
+MAX_LOGIN_ATTEMPTS = settings.max_login_attempts
+LOGIN_LOCKOUT_SECONDS = settings.login_lockout_seconds
 
 
 def user_profile_cache_key(user_id: int) -> str:
@@ -30,7 +33,9 @@ async def get_cached_user_profile(redis: Redis, user_id: int) -> dict | None:
     key = user_profile_cache_key(user_id)
     cached_value = await redis.get(key)
     if cached_value is None:
+        CACHE_OPS.labels(operation="profile", result="miss").inc()
         return None
+    CACHE_OPS.labels(operation="profile", result="hit").inc()
     return json.loads(cached_value)
 
 
@@ -98,9 +103,9 @@ async def is_token_blacklisted(redis: Redis, jti: str) -> bool:
 
 async def increment_login_attempts(redis: Redis, email: str) -> int:
     key = f"{LOGIN_ATTEMPTS_PREFIX}{email}"
-    count = await redis.get(key)
-    new_count = int(count or 0) + 1
-    await redis.set(key, str(new_count), ex=LOGIN_LOCKOUT_SECONDS)
+    new_count = await redis.incr(key)
+    if new_count == 1:
+        await redis.expire(key, LOGIN_LOCKOUT_SECONDS)
     return new_count
 
 

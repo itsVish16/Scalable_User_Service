@@ -4,20 +4,24 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.routing import Match
 
-from app.core.metrics import REQUEST_COUNT, REQUEST_LATENCY
+from app.core.metrics import ACTIVE_REQUESTS, REQUEST_COUNT, REQUEST_LATENCY
 
-SKIP_PATHS = {"/health", "/metrics"}
+SKIP_PATH_PREFIXES = ("/health", "/metrics")
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = self._get_route_template(request)
 
-        if path in SKIP_PATHS:
+        if path.startswith(SKIP_PATH_PREFIXES):
             return await call_next(request)
 
         start_time = time.perf_counter()
-        response = await call_next(request)
+        ACTIVE_REQUESTS.labels(method=request.method).inc()
+        try:
+            response = await call_next(request)
+        finally:
+            ACTIVE_REQUESTS.labels(method=request.method).dec()
         duration = time.perf_counter() - start_time
 
         REQUEST_COUNT.labels(

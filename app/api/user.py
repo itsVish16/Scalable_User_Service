@@ -1,5 +1,7 @@
-from datetime import UTC
+import hmac
+from datetime import UTC, datetime
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -10,9 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import (
+    DUMMY_HASH,
     create_access_token,
     create_refresh_token,
     generate_otp,
+    verify_password,
 )
 from app.db.database import get_db
 from app.db.redis import get_redis
@@ -20,6 +24,7 @@ from app.models.user import User
 from app.schemas.user import (
     ForgotPasswordRequest,
     LoginRequest,
+    LogoutRequest,
     MessageResponse,
     RefreshTokenRequest,
     ResendVerificationRequest,
@@ -58,20 +63,14 @@ from app.services.user_service import (
     update_user,
     update_user_password,
 )
-from app.tasks.email import (
-    send_password_reset_email,
-    send_verification_email,
-    send_welcome_email,
-)
 
 router = APIRouter(prefix="/users", tags=["users"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/users/login")
+logger = structlog.get_logger(__name__)
 
 
-async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db),
-):
+def _decode_and_validate_token(token: str, expected_type: str) -> dict:
+    """Shared JWT decoding logic. Raises credentials_exception on any failure."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -83,9 +82,67 @@ async def get_current_user(
         user_id = payload.get("sub")
         token_type = payload.get("type")
 
-        if user_id is None or token_type != "access":
+        if user_id is None or token_type != expected_type:
             raise credentials_exception
     except JWTError:
+        raise credentials_exception
+
+    return payload
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    payload = _decode_and_validate_token(token, "access")
+    user_id = payload["sub"]
+
+    # Check if this specific token has been revoked (e.g. via logout)
+    jti = payload.get("jti")
+    if jti and await is_token_blacklisted(redis, jti):
+        raise credentials_exception
+
+    # Try cache first
+    cached_profile = await get_cached_user_profile(redis, int(user_id))
+    if cached_profile is not None:
+        return cached_profile
+
+    # Cache miss -> DB Query
+    user = await get_user_by_id(db, int(user_id))
+    if user is None:
+        raise credentials_exception
+
+    # Cache the profile
+    response_data = UserResponse.model_validate(user).model_dump(mode="json")
+    await set_cached_user_profile(redis, user.id, response_data)
+
+    return response_data
+
+
+async def get_current_user_db(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    payload = _decode_and_validate_token(token, "access")
+    user_id = payload["sub"]
+
+    # Check if this specific token has been revoked
+    jti = payload.get("jti")
+    if jti and await is_token_blacklisted(redis, jti):
         raise credentials_exception
 
     user = await get_user_by_id(db, int(user_id))
@@ -95,7 +152,7 @@ async def get_current_user(
 
 
 @router.post("/signup", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit("5/minute")
+@limiter.limit(settings.rate_limit_signup)
 async def signup(
     request: Request, payload: SignupRequest, db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)
 ):
@@ -123,17 +180,16 @@ async def signup(
 
     verification_otp = generate_otp()
     await set_email_verification_token(redis, str(user.email), verification_otp)
-    send_welcome_email.delay(str(user.email), user.full_name)
-    send_verification_email.delay(str(user.email), verification_otp)
+    logger.info("verification_otp_generated", email=str(user.email))
 
     if settings.debug:
         return {"message": f"User registered successfully. Verification OTP: {verification_otp}"}
 
-    return {"message": "User registered successfully"}
+    return {"message": "User registered successfully. Please verify your email using the OTP."}
 
 
 @router.post("/login", response_model=TokenResponse)
-@limiter.limit("10/minute")
+@limiter.limit(settings.rate_limit_login)
 async def login(
     request: Request, payload: LoginRequest, db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)
 ):
@@ -146,7 +202,17 @@ async def login(
 
     user = await get_user_by_email(db, str(payload.email))
 
-    if user is None or not await check_user_password(user, payload.password):
+    # Timing side-channel fix: always run bcrypt verification even if user doesn't exist.
+    # This normalizes response time so attackers can't distinguish "user exists" from "user doesn't".
+    if user is None:
+        await verify_password("dummy", DUMMY_HASH)
+        await increment_login_attempts(redis, str(payload.email))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    if not await check_user_password(user, payload.password):
         await increment_login_attempts(redis, str(payload.email))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -173,7 +239,7 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenResponse)
-@limiter.limit("10/minute")
+@limiter.limit(settings.rate_limit_refresh)
 async def refresh_token(
     request: Request,
     payload: RefreshTokenRequest,
@@ -208,8 +274,6 @@ async def refresh_token(
         raise credentials_exception
 
     exp = decode_payload.get("exp", 0)
-    from datetime import datetime
-
     remaining_ttl = max(int(exp - datetime.now(UTC).timestamp()), 0)
     await blacklist_token(redis, jti, remaining_ttl)
 
@@ -224,20 +288,34 @@ async def refresh_token(
 
 
 @router.post("/logout", response_model=MessageResponse)
-async def logout(payload: RefreshTokenRequest, redis: Redis = Depends(get_redis)):
+async def logout(
+    payload: LogoutRequest,
+    token: str = Depends(oauth2_scheme),
+    redis: Redis = Depends(get_redis),
+):
+    # Blacklist the access token (from Authorization header)
     try:
-        decode_payload = jwt.decode(
+        access_payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        access_jti = access_payload.get("jti")
+        if access_jti:
+            exp = access_payload.get("exp", 0)
+            remaining_ttl = max(int(exp - datetime.now(UTC).timestamp()), 0)
+            await blacklist_token(redis, access_jti, remaining_ttl)
+    except JWTError:
+        pass
+
+    # Blacklist the refresh token (from request body)
+    try:
+        refresh_payload = jwt.decode(
             payload.refresh_token,
             settings.secret_key,
             algorithms=[settings.algorithm],
         )
-        jti = decode_payload.get("jti")
-        if jti:
-            exp = decode_payload.get("exp", 0)
-            from datetime import datetime
-
+        refresh_jti = refresh_payload.get("jti")
+        if refresh_jti:
+            exp = refresh_payload.get("exp", 0)
             remaining_ttl = max(int(exp - datetime.now(UTC).timestamp()), 0)
-            await blacklist_token(redis, jti, remaining_ttl)
+            await blacklist_token(redis, refresh_jti, remaining_ttl)
     except JWTError:
         pass
 
@@ -245,7 +323,7 @@ async def logout(payload: RefreshTokenRequest, redis: Redis = Depends(get_redis)
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
-@limiter.limit("5/minute")
+@limiter.limit(settings.rate_limit_forgot_password)
 async def forgot_password(
     request: Request,
     payload: ForgotPasswordRequest,
@@ -257,16 +335,16 @@ async def forgot_password(
     if user is not None:
         reset_otp = generate_otp()
         await set_password_reset_token(redis, str(payload.email), reset_otp)
-        send_password_reset_email.delay(str(payload.email), reset_otp)
+        logger.info("password_reset_otp_generated", email=str(payload.email))
 
         if settings.debug:
             return {"message": f"Password reset OTP generated: {reset_otp}"}
 
-    return {"message": "If the email exists, a reset link has been sent"}
+    return {"message": "If the email exists, password reset instructions are ready."}
 
 
 @router.post("/reset-password", response_model=MessageResponse)
-@limiter.limit("5/minute")
+@limiter.limit(settings.rate_limit_reset_password)
 async def reset_password(
     request: Request,
     payload: ResetPasswordRequest,
@@ -281,7 +359,7 @@ async def reset_password(
         )
 
     stored_token = await get_password_reset_token(redis, str(payload.email))
-    if stored_token is None or stored_token != payload.otp:
+    if stored_token is None or not hmac.compare_digest(stored_token, payload.otp):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
@@ -295,21 +373,14 @@ async def reset_password(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user), redis: Redis = Depends(get_redis)):
-    cached_profile = await get_cached_user_profile(redis, current_user.id)
-    if cached_profile is not None:
-        return cached_profile
-
-    response_data = UserResponse.model_validate(current_user).model_dump(mode="json")
-    await set_cached_user_profile(redis, current_user.id, response_data)
-
-    return response_data
+async def get_me(current_user: dict = Depends(get_current_user)):
+    return current_user
 
 
 @router.patch("/me", response_model=UserResponse)
 async def update_me(
     payload: UpdateUserRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_db),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ):
@@ -330,7 +401,7 @@ async def update_me(
 
 
 @router.post("/verify-email", response_model=MessageResponse)
-@limiter.limit("5/minute")
+@limiter.limit(settings.rate_limit_verify_email)
 async def verify_email(
     request: Request,
     payload: VerifyEmailRequest,
@@ -345,7 +416,7 @@ async def verify_email(
         )
 
     stored_token = await get_email_verification_token(redis, str(payload.email))
-    if stored_token is None or stored_token != payload.token:
+    if stored_token is None or not hmac.compare_digest(stored_token, payload.token):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification token",
@@ -359,7 +430,7 @@ async def verify_email(
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
-@limiter.limit("5/minute")
+@limiter.limit(settings.rate_limit_resend_verification)
 async def resend_verification(
     request: Request,
     payload: ResendVerificationRequest,
@@ -369,16 +440,16 @@ async def resend_verification(
     user = await get_user_by_email(db, str(payload.email))
 
     if user is None:
-        return {"message": "If the email exists, a verification email has been sent"}
+        return {"message": "If the email exists, verification instructions are ready."}
 
     if user.is_verified:
         return {"message": "Email is already verified"}
 
     verification_otp = generate_otp()
     await set_email_verification_token(redis, str(payload.email), verification_otp)
-    send_verification_email.delay(str(payload.email), verification_otp)
+    logger.info("verification_otp_regenerated", email=str(payload.email))
 
     if settings.debug:
         return {"message": f"Verification OTP generated: {verification_otp}"}
 
-    return {"message": "If the email exists, a verification email has been sent"}
+    return {"message": "If the email exists, verification instructions are ready."}

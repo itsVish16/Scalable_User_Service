@@ -16,7 +16,8 @@ async def get_redis() -> Redis:
         _pool = ConnectionPool.from_url(
             settings.redis_url,
             decode_responses=True,
-            max_connections=20,
+            max_connections=settings.redis_max_connections,
+            health_check_interval=30,
         )
 
         _client = Redis(connection_pool=_pool)

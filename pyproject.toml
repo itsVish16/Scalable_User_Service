@@ -22,6 +22,7 @@ dependencies = [
     "structlog>=25.5.0",
     "resend>=2.29.0",
     "prometheus-client>=0.25.0",
+    "uvloop>=0.22.1",
 ]
 
 [dependency-groups]

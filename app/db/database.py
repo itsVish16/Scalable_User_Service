@@ -3,14 +3,15 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-# Conditionally apply pooling settings (Postgres only)
 engine_kwargs = {}
 if settings.database_url.startswith("postgresql"):
     engine_kwargs.update(
         {
-            "pool_size": 10,
-            "max_overflow": 30,
-            "pool_timeout": 30,
+            "pool_pre_ping": True,
+            "pool_size": settings.db_pool_size,
+            "max_overflow": settings.db_max_overflow,
+            "pool_timeout": settings.db_pool_timeout,
+            "pool_recycle": 1800,
         }
     )
 

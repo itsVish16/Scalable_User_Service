@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.user import router as user_router
+from app.config import settings
 from app.core.logging import configure_logging
 from app.core.rate_limit import limiter
 from app.db.database import engine, get_db
@@ -22,10 +23,19 @@ from app.middleware.metrics import MetricsMiddleware
 
 configure_logging()
 logger = logging.getLogger(__name__)
+cors_origins = settings.cors_allowed_origins_list
+allow_credentials = cors_origins != ["*"]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # --- Startup Guards ---
+    if not settings.debug and settings.secret_key == "dev-secret-key-change-me":
+        raise RuntimeError(
+            "FATAL: SECRET_KEY must be changed for production! "
+            "Set a strong random secret via the SECRET_KEY environment variable."
+        )
+
     logger.info("Starting up — initializing connections")
     await get_redis()
     yield
@@ -49,8 +59,8 @@ app.add_middleware(RequestContextLogMiddleware)
 app.add_middleware(MetricsMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -95,6 +105,16 @@ async def get_health_ready(
 
     status_code = 200 if health["status"] == "healthy" else 503
     return JSONResponse(content=health, status_code=status_code)
+
+
+@app.get("/bench/db", include_in_schema=False)
+async def bench_db(db: AsyncSession = Depends(get_db)):
+    """DB-only benchmark — always hits Postgres, bypasses cache entirely."""
+    result = await db.execute(text("SELECT id, username, email FROM users LIMIT 1"))
+    row = result.first()
+    if row is None:
+        return {"bench": "no_data"}
+    return {"id": row[0], "username": row[1], "email": row[2]}
 
 
 @app.get("/metrics", include_in_schema=False)

@@ -1,117 +1,87 @@
-# 🚀 Scalable User Service
+# Scalable User Service
 
-![Project Screenshot](assets/screenshot.png)
+FastAPI user service with JWT auth, Redis-backed caching, Postgres persistence, Prometheus metrics, and a Dockerized local stack for development and load testing.
 
-A production-grade, high-performance User Microservice built with **FastAPI**, **PostgreSQL**, and **Redis**. Designed to handle massive traffic spikes with aggressive caching, asynchronous background tasks, and cloud-native resilience patterns.
+## Local Stack
 
----
+Start everything with Docker:
 
-## ✨ Key Features
-
-### 🔐 Security & Auth
-- **JWT-based Authentication**: Secure access and refresh token flows with `jti` claim validation.
-- **Async Password Hashing**: Bcrypt operations are offloaded to a dedicated thread pool to prevent event loop starvation.
-- **Account Lockout**: Automated protection against brute-force attacks (5 failed attempts = 15-minute lockout).
-- **Token Blacklisting**: Real-time token revocation on logout and refresh.
-
-### ⚡ Performance & Scaling
-- **Aggressive Redis Caching**: The `/me` profile endpoint is optimized for sub-10ms response times via intelligent caching.
-- **Fail-Fast Load Shedding**: Reduced database connection pool timeouts to prevent cascading failures under heavy load.
-- **Asynchronous Workflows**: Email delivery and heavy tasks are handled by **Celery** workers to keep the API layer stateless and fast.
-
-### 🛠️ Developer Experience
-- **Cloud-Native Health Checks**: Split `/health/live` (liveness) and `/health/ready` (readiness) probes for seamless Kubernetes/Docker integration.
-- **Observability**: Structured JSON logging, Request IDs, and Prometheus metrics at `/metrics`.
-- **Modern Tooling**: Built with `uv` for lightning-fast dependency management and `ruff` for strict linting.
-
----
-
-## 🏗️ Architecture
-
-```text
-app/
-├── api/                # Route handlers (v1)
-├── core/               # Security, Logging, Metrics, Rate Limiting
-├── db/                 # Postgres & Redis Engine setup
-├── middleware/         # Structured Logging & Prometheus Middleware
-├── models/             # SQLAlchemy (SQL) Data Models
-├── schemas/            # Pydantic (JSON) Validation Schemas
-├── services/           # Business Logic & Cache Providers
-└── tasks/              # Celery App & Background Workers
+```bash
+docker compose up --build
 ```
 
----
+This now brings up:
 
-## 🚀 Getting Started
+- API on [http://localhost:8000](http://localhost:8000)
+- Postgres on `localhost:5432`
+- Redis on `localhost:6379`
+- Prometheus on [http://localhost:9090](http://localhost:9090)
+- Grafana on [http://localhost:3000](http://localhost:3000)
 
-### 1. Prerequisites
-- [Docker & Docker Compose](https://docs.docker.com/get-docker/)
-- [Python 3.13+](https://www.python.org/)
-- [uv](https://github.com/astral-sh/uv) (Recommended)
+The API container runs `alembic upgrade head` automatically before starting Uvicorn.
 
-### 2. Environment Setup
-Copy the example environment file and fill in your secrets:
+## Environment
+
+Create your local env file:
+
 ```bash
 cp .env.example .env
 ```
 
-### 3. Run with Docker (Recommended)
-The easiest way to start the full stack (API + Worker + DB + Redis):
-```bash
-docker compose up --build
-```
-The API will be available at `http://localhost:8000`.
+Important controls now exposed through `.env`:
 
-### 4. Local Development
-If you prefer running without Docker:
-```bash
-# Install dependencies
-uv sync
+- `ENABLE_RATE_LIMITING=true|false`
+- `RATE_LIMIT_SIGNUP`, `RATE_LIMIT_LOGIN`, `RATE_LIMIT_REFRESH`
+- `RATE_LIMIT_FORGOT_PASSWORD`, `RATE_LIMIT_RESET_PASSWORD`
+- `RATE_LIMIT_VERIFY_EMAIL`, `RATE_LIMIT_RESEND_VERIFICATION`
+- `MAX_LOGIN_ATTEMPTS`
+- `LOGIN_LOCKOUT_SECONDS`
+- `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT`
+- `REDIS_MAX_CONNECTIONS`
+- `CORS_ALLOWED_ORIGINS`
 
-# Apply database migrations
-uv run alembic upgrade head
+## Current Auth Flow
 
-# Start the API
-uv run uvicorn app.main:app --reload
+- Signup creates the user as unverified.
+- Verification OTP and reset OTP are stored in Redis.
+- Email sending is disconnected for now.
+- In `DEBUG=true`, OTP values are returned in success messages for easy testing.
+- In non-debug mode, endpoints return generic success messages.
 
-# Start the Celery Worker (In a new terminal)
-uv run celery -A app.tasks.celery_app.celery_app worker --loglevel=info
-```
+## Monitoring Endpoints
 
----
+- App metrics: [http://localhost:8000/metrics](http://localhost:8000/metrics)
+- Prometheus UI: [http://localhost:9090](http://localhost:9090)
+- Grafana UI: [http://localhost:3000](http://localhost:3000)
 
-## 🚦 Useful Endpoints
+Grafana is pre-provisioned with Prometheus as the default datasource.
 
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/api/v1/users/signup` | `POST` | Create a new account |
-| `/api/v1/users/login` | `POST` | Authenticate & get JWT tokens |
-| `/api/v1/users/me` | `GET` | Get current user (Cached) |
-| `/health/live` | `GET` | Process liveness check |
-| `/health/ready` | `GET` | Dependency readiness check |
-| `/metrics` | `GET` | Prometheus telemetry |
+## Tests
 
----
-
-## 🧪 Testing
-
-### Unit & Integration Tests
-We maintain a 100% green test suite covering all critical auth and scaling paths.
 ```bash
 uv run pytest
 ```
 
-### Load Testing
-The project includes a `locustfile.py` to simulate high-concurrency traffic.
-```bash
-# 1. Setup test data
-uv run setup_test_data.py
+## Load Testing
 
-# 2. Run Locust
-uv run locust --headless -u 1000 -r 100 --run-time 1m --host=http://localhost:8000
+Seed verified load-test users:
+
+```bash
+LOAD_TEST_USER_COUNT=1000 uv run setup_test_data.py
 ```
 
----
+Keep `LOAD_TEST_USER_COUNT` at least as large as your planned concurrent Locust users so each simulated user gets a unique identity.
 
-## 📜 License
-This project is licensed under the MIT License.
+Run steady-state traffic:
+
+```bash
+LOAD_TEST_MODE=steady uv run locust --headless -u 300 -r 30 --run-time 5m --host=http://localhost:8000
+```
+
+Run the rate-limit probe separately:
+
+```bash
+LOAD_TEST_MODE=rate-limit uv run locust --headless -u 20 -r 5 --run-time 2m --host=http://localhost:8000
+```
+
+The full plan is in [docs/load-testing.md](/Users/vishal/Desktop/WorkSpace2/Scalable_User_Service/docs/load-testing.md).
