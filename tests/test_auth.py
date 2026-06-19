@@ -289,3 +289,39 @@ async def test_account_lockout_after_failed_attempts(client, fake_redis):
 async def test_me_without_auth(client):
     response = await client.get("/api/v1/users/me")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_events_published_to_redis(client, fake_redis):
+    # 1. Signup (should publish user.created)
+    payload, _ = await signup_user(client, username_prefix="eventsuser", verified=False, fake_redis=fake_redis)
+
+    created_events = [msg for chan, msg in fake_redis.published_messages if "user.created" in msg]
+    assert len(created_events) == 1
+
+    # 2. Verify (should publish user.verified)
+    verification_token = await fake_redis.get(f"user:email-verification:{payload['email']}")
+    verify_response = await client.post(
+        "/api/v1/users/verify-email",
+        json={"email": payload["email"], "token": verification_token},
+    )
+    assert verify_response.status_code == 200
+
+    verified_events = [msg for chan, msg in fake_redis.published_messages if "user.verified" in msg]
+    assert len(verified_events) == 1
+
+    # 3. Update profile (should publish user.updated)
+    login_resp = await login_user(client, payload["email"], payload["password"])
+    assert login_resp.status_code == 200
+    access_token = login_resp.json()["access_token"]
+
+    update_response = await client.patch(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"full_name": "New Events Name"},
+    )
+    assert update_response.status_code == 200
+
+    updated_events = [msg for chan, msg in fake_redis.published_messages if "user.updated" in msg]
+    assert len(updated_events) == 1
+

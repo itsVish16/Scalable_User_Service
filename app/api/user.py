@@ -62,6 +62,7 @@ from app.services.user_service import (
     update_user,
     update_user_password,
 )
+from app.services.event_publisher import publish_user_event
 from app.tasks.email import (
     send_password_reset_email,
     send_verification_email,
@@ -187,6 +188,18 @@ async def signup(
     await set_email_verification_token(redis, str(user.email), verification_otp)
     logger.info("verification_otp_generated", email=str(user.email))
     send_verification_email.delay(str(user.email), verification_otp)
+
+    await publish_user_event(
+        redis,
+        "user.created",
+        {
+            "id": user.id,
+            "email": str(user.email),
+            "username": user.username,
+            "full_name": user.full_name,
+            "is_verified": user.is_verified,
+        },
+    )
 
     if settings.debug:
         return {"message": f"User registered successfully. Verification OTP: {verification_otp}"}
@@ -420,6 +433,17 @@ async def update_me(
     response_data = UserResponse.model_validate(updated_user).model_dump(mode="json")
     await set_cached_user_profile(redis, updated_user.id, response_data)
 
+    await publish_user_event(
+        redis,
+        "user.updated",
+        {
+            "id": updated_user.id,
+            "email": str(updated_user.email),
+            "username": updated_user.username,
+            "full_name": updated_user.full_name,
+        },
+    )
+
     return response_data
 
 
@@ -449,6 +473,16 @@ async def verify_email(
     await delete_email_verification_token(redis, str(payload.email))
     await delete_cached_user_profile(redis, user.id)
     send_welcome_email.delay(str(user.email), user.full_name)
+
+    await publish_user_event(
+        redis,
+        "user.verified",
+        {
+            "id": user.id,
+            "email": str(user.email),
+            "is_verified": True,
+        },
+    )
 
     return {"message": "Email verified successfully"}
 

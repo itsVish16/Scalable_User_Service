@@ -42,6 +42,12 @@ class FakeRedis:
     async def setex(self, key, seconds, value):
         self.store[key] = value
 
+    async def publish(self, channel, message):
+        if not hasattr(self, "published_messages"):
+            self.published_messages = []
+        self.published_messages.append((channel, message))
+        return 0
+
 
 @pytest.fixture(scope="session", autouse=True)
 async def setup_test_db():
